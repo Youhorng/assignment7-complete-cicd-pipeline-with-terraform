@@ -1,0 +1,4 @@
+title = "Feane gitleaks config"
+
+[extend]
+useDefault = true

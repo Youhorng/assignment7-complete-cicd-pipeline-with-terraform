@@ -1,0 +1,80 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Terraform apply
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      alb_dns: ${{ steps.tf-output.outputs.alb }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        run: terraform -chdir=terraform init
+
+      - name: Terraform plan
+        run: |
+          terraform -chdir=terraform plan \
+            -var "image_uri=ghcr.io/${{ github.repository_owner }}/feane:latest" \
+            -out=tfplan
+
+      - name: Terraform apply
+        run: terraform -chdir=terraform apply -auto-approve tfplan
+
+      - id: tf-output
+        run: |
+          ALB=$(terraform -chdir=terraform output -raw alb_dns_name)
+          echo "alb=$ALB" >> $GITHUB_OUTPUT
+          echo "ALB DNS: $ALB"
+
+  deploy:
+    name: Roll new container to ASG
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Trigger ASG instance refresh
+        run: |
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name feane-asg \
+            --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":60}' \
+            || echo "Instance refresh may already be in progress — continuing"
+
+      - name: Smoke test ALB
+        run: |
+          ALB="${{ needs.terraform.outputs.alb_dns }}"
+          echo "Testing http://$ALB/health"
+          for i in {1..30}; do
+            if curl -fsS "http://$ALB/health"; then
+              echo "✓ Site is up"
+              exit 0
+            fi
+            echo "Attempt $i: not ready yet, sleeping 10s..."
+            sleep 10
+          done
+          echo "✗ Smoke test failed after 5 minutes"
+          exit 1
