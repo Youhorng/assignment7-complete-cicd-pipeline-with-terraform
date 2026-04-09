@@ -66,50 +66,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Compute lowercase image name
+
+      - name: Compute lowercase image refs
         id: img
         run: |
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "name=ghcr.io/${OWNER_LC}/feane" >> $GITHUB_OUTPUT
-          echo "ref=ghcr.io/${OWNER_LC}/feane:sha-${{ github.sha }}" >> $GITHUB_OUTPUT
-      - uses: docker/login-action@v3
+          echo "sha_ref=ghcr.io/${OWNER_LC}/feane:sha-${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "latest_ref=ghcr.io/${OWNER_LC}/feane:latest" >> $GITHUB_OUTPUT
+
+      # Plain docker build into the runner's local daemon so Trivy can scan
+      # the image BEFORE we push it to ghcr.io (scan-then-promote pattern).
+      - name: Build image locally
+        run: |
+          docker build \
+            -t ${{ steps.img.outputs.sha_ref }} \
+            -t ${{ steps.img.outputs.latest_ref }} \
+            .
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ steps.img.outputs.sha_ref }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.img.outputs.name }}
-          tags: |
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
-      # Build locally first (load into the runner's docker daemon) so we can
-      # scan the image BEFORE pushing it to ghcr.io. Scan-then-promote.
-      - name: Build image (load locally)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: ${{ steps.img.outputs.ref }}
-          severity: HIGH,CRITICAL
-          exit-code: '1'
-          ignore-unfixed: true
-      # Only push to ghcr.io if the scan passed. Cache makes this near-instant.
+
       - name: Push image to ghcr.io
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: |
+          docker push ${{ steps.img.outputs.sha_ref }}
+          docker push ${{ steps.img.outputs.latest_ref }}
