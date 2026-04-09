@@ -3,6 +3,7 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+#tfsec:ignore:aws-ec2-require-vpc-flow-logs-for-all-vpcs # Flow logs require S3 bucket + IAM role, not allowed in school sandbox
 resource "aws_vpc" "this" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
@@ -15,6 +16,7 @@ resource "aws_internet_gateway" "this" {
   tags   = { Name = "${var.project_name}-igw" }
 }
 
+#tfsec:ignore:aws-ec2-no-public-ip-subnet # EC2 instances must reach ghcr.io to pull image; no NAT gateway in this design
 resource "aws_subnet" "public" {
   count                   = 2
   vpc_id                  = aws_vpc.this.id
@@ -45,6 +47,7 @@ resource "aws_security_group" "alb" {
   description = "Allow HTTP from internet"
   vpc_id      = aws_vpc.this.id
 
+  #tfsec:ignore:aws-ec2-no-public-ingress-sgr # Public website by design — ALB must accept :80 from internet
   ingress {
     description = "HTTP from anywhere"
     from_port   = 80
@@ -53,7 +56,9 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  #tfsec:ignore:aws-ec2-no-public-egress-sgr # ALB must reach EC2 targets and AWS APIs
   egress {
+    description = "Allow all outbound to reach EC2 targets"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -76,7 +81,9 @@ resource "aws_security_group" "ec2" {
     security_groups = [aws_security_group.alb.id]
   }
 
+  #tfsec:ignore:aws-ec2-no-public-egress-sgr # EC2 needs outbound to ghcr.io to pull image and to apt repos for Docker install
   egress {
+    description = "Allow all outbound for ghcr.io image pull and Docker install"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -87,13 +94,15 @@ resource "aws_security_group" "ec2" {
 }
 
 # ----- ALB -----
+#tfsec:ignore:aws-elb-alb-not-public # Public website by design — must be internet-facing
 resource "aws_lb" "this" {
-  name               = "${var.project_name}-alb"
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb.id]
-  subnets            = aws_subnet.public[*].id
-  tags               = { Name = "${var.project_name}-alb" }
+  name                       = "${var.project_name}-alb"
+  internal                   = false
+  load_balancer_type         = "application"
+  security_groups            = [aws_security_group.alb.id]
+  subnets                    = aws_subnet.public[*].id
+  drop_invalid_header_fields = true
+  tags                       = { Name = "${var.project_name}-alb" }
 }
 
 resource "aws_lb_target_group" "this" {
@@ -112,6 +121,7 @@ resource "aws_lb_target_group" "this" {
   }
 }
 
+#tfsec:ignore:aws-elb-http-not-used # No domain/ACM cert in v1 — HTTPS is a stretch goal
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.this.arn
   port              = 80
@@ -130,6 +140,12 @@ resource "aws_launch_template" "this" {
   instance_type = var.instance_type
 
   vpc_security_group_ids = [aws_security_group.ec2.id]
+
+  metadata_options {
+    http_tokens                 = "required" # IMDSv2 only
+    http_endpoint               = "enabled"
+    http_put_response_hop_limit = 1
+  }
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
