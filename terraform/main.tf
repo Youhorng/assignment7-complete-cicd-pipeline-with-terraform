@@ -164,7 +164,7 @@ resource "aws_launch_template" "this" {
     systemctl enable --now docker
     # Image is PUBLIC on ghcr.io — no login needed
     docker pull ${var.image_uri}
-    docker run -d --restart=always -p 80:80 --name feane ${var.image_uri}
+    docker run -d --restart=always -p 80:8080 --name feane ${var.image_uri}
   EOF
   )
 
