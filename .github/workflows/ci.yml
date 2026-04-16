@@ -15,7 +15,7 @@ jobs:
     name: Secret scan (Gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
@@ -26,7 +26,7 @@ jobs:
     name: Code quality (SonarCloud)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: SonarSource/sonarcloud-github-action@v2
@@ -38,7 +38,7 @@ jobs:
     name: Filesystem vuln scan (Trivy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: fs
@@ -51,7 +51,7 @@ jobs:
     name: Terraform fmt/validate/tfsec
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: hashicorp/setup-terraform@v3
       - run: terraform -chdir=terraform fmt -check
       - run: terraform -chdir=terraform init -backend=false
@@ -66,7 +66,7 @@ jobs:
     needs: [gitleaks, trivy-fs, tf-validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Compute lowercase image refs
         id: img
