@@ -1,4 +1,4 @@
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.29-alpine
 
 # Switch to root briefly to patch OS packages (openssl/libpng/libxml2/libexpat CVEs)
 USER root
